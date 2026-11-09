@@ -18,6 +18,12 @@ Proyecto de análisis de datos clínicos **longitudinales** (mediciones repetida
 
 ![Fuga de información: real vs. predicho](reports/02_fuga_real_vs_predicho.png)
 
+## Qué significa esto
+
+- **Para evaluar cualquier modelo clínico, validar por paciente.** Con una partición aleatoria, este proyecto habría reportado un modelo excelente (R² 0,91) que en realidad no generaliza a pacientes nuevos.
+- **Para un sistema de monitoreo remoto, empezar por la línea de base de cada paciente.** Sin ella, la voz no estima la gravedad mejor que el promedio; con ella, el error baja un 62%.
+- **Antes de usar deep learning, comparar contra reglas simples.** Con 42 pacientes, una extrapolación lineal pronostica mejor que la LSTM.
+
 ## Notebooks
 
 | Notebook | Contenido |
@@ -58,7 +64,7 @@ git clone https://github.com/CaroBailon/parkinson-longitudinal-ml.git
 cd parkinson-longitudinal-ml
 python -m venv .venv
 source .venv/Scripts/activate      # Windows (Git Bash). En Linux/Mac: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # en Linux, para evitar descargar CUDA: pip install torch --index-url https://download.pytorch.org/whl/cpu antes
 python src/data.py                  # descarga los datos
 jupyter notebook                    # ejecutar los notebooks en orden: 01 → 02 → 03
 ```
@@ -82,4 +88,4 @@ jupyter notebook                    # ejecutar los notebooks en orden: 01 → 02
 ## Autora
 
 **Carolina Bailon Trujillo** · Estudiante de Ciencia de Datos en Organizaciones (UNLP)
-[GitHub](https://github.com/CaroBailon)
+[LinkedIn](https://www.linkedin.com/in/carolinabailontrujillo/) · [GitHub](https://github.com/CaroBailon)
