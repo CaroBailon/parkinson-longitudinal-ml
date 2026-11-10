@@ -10,11 +10,11 @@ Proyecto de análisis de datos clínicos **longitudinales** (mediciones repetida
 
 | # | Hallazgo | Notebook |
 |---|---|---|
-| 1 | **El 93% de la variación en la gravedad es entre pacientes**; dentro de cada paciente cambia poco en 6 meses (+0,13 puntos de UPDRS por semana en promedio). | 01 · 03 |
+| 1 | **El 93% de la variación en la gravedad es entre pacientes**; dentro de cada paciente cambia poco en 6 meses (+0,57 puntos de UPDRS por mes en promedio). | 01 · 03 |
 | 2 | **Una partición aleatoria de train/test infla las métricas de forma drástica:** el mismo Random Forest pasa de R² = 0,91 a R² = −0,64 cuando se evalúa en pacientes nuevos. Con la partición aleatoria el modelo "memoriza" pacientes a partir de la edad, el sexo y medidas de voz estables. | 02 |
 | 3 | **Para pacientes nuevos, ningún modelo supera a predecir el promedio** (MAE ≈ 8,9 puntos). Conocer la línea de base del propio paciente reduce el error a ≈ 3,4 puntos (−62%). | 02 |
-| 4 | **Ninguna medida de voz funciona como predictor longitudinal:** en el modelo mixto con descomposición entre / dentro del paciente, ningún efecto dentro del paciente resulta significativo. | 03 |
-| 5 | **El deep learning no supera a una regla simple:** pronosticando a 4 semanas, la extrapolación lineal (MAE 0,77) supera a la LSTM y a Ridge. Es coherente con la UPDRS interpolada del dataset y con la muestra chica (42 pacientes). | 03 |
+| 4 | **Ninguna medida de voz funciona como predictor longitudinal:** en el modelo mixto con descomposición entre / dentro del paciente, ningún efecto dentro del paciente resulta significativo, y tampoco entre pacientes. La conclusión se confirmó revisando los supuestos del modelo y con métodos que no dependen de ellos. | 03 |
+| 5 | **El deep learning no supera a una regla simple:** pronosticando a 4 semanas, la extrapolación lineal (MAE 0,31) supera a la LSTM (1,68) y a Ridge (0,62). Es coherente con la UPDRS interpolada del dataset y con la muestra chica (42 pacientes). | 03 |
 
 ![Fuga de información: real vs. predicho](reports/02_fuga_real_vs_predicho.png)
 
@@ -30,7 +30,7 @@ Proyecto de análisis de datos clínicos **longitudinales** (mediciones repetida
 |---|---|
 | [01 · Exploración longitudinal](notebooks/01_exploracion_longitudinal.ipynb) | Diseño longitudinal, trayectorias por paciente, varianza entre / dentro de pacientes, correlación global vs. dentro del paciente, redundancia entre variables |
 | [02 · Modelado con validación por paciente](notebooks/02_modelado_validacion_por_paciente.ipynb) | `KFold` vs. `GroupKFold`, importancia por permutación, comparación contra baselines, predicción del cambio respecto de la línea de base |
-| [03 · Modelos mixtos y deep learning](notebooks/03_modelos_mixtos_y_deep_learning.ipynb) | Modelo mixto (intercepto y pendiente aleatorios) con descomposición entre / dentro, pronóstico a 4 semanas con LSTM (PyTorch) vs. baselines |
+| [03 · Modelos mixtos y deep learning](notebooks/03_modelos_mixtos_y_deep_learning.ipynb) | Modelo mixto (intercepto y pendiente aleatorios) con descomposición entre / dentro, diagnóstico de supuestos y chequeos de robustez, pronóstico a 4 semanas con LSTM (PyTorch) vs. baselines |
 
 Cada notebook abre con un **resumen ejecutivo** que se calcula automáticamente a partir de los datos.
 
@@ -40,6 +40,7 @@ Cada notebook abre con un **resumen ejecutivo** que se calcula automáticamente 
 
 - **Validación:** `GroupKFold` por paciente; comparación sistemática contra baselines (promedio, persistencia, tendencia lineal).
 - **Estadística longitudinal:** proporción de varianza entre pacientes (aprox. ICC), modelos lineales mixtos (`statsmodels`) con descomposición entre / dentro (Mundlak).
+- **Diagnóstico del modelo:** convergencia, QQ-plots de residuos y efectos aleatorios, varianza constante y autocorrelación de residuos; las conclusiones se repiten con métodos robustos a esos supuestos (pendiente por paciente + test t, regresión a nivel paciente).
 - **Machine Learning:** Ridge, Random Forest, XGBoost; importancia por permutación.
 - **Deep Learning:** LSTM sobre secuencias semanales (PyTorch), con estandarización calculada solo en entrenamiento.
 - **Visualización:** Plotly.
@@ -55,6 +56,7 @@ Los datos no se versionan: se descargan automáticamente con `src/data.py`.
 
 - En el estudio original, la UPDRS fue evaluada clínicamente al inicio, a los 3 y a los 6 meses; los valores intermedios están interpolados.
 - 42 pacientes en etapa temprana: muestra chica para generalizar y para entrenar redes neuronales.
+- Por la interpolación, los residuos del modelo mixto están muy autocorrelacionados semana a semana (r ≈ 0,93). Por eso las conclusiones principales se verificaron con métodos que no dependen de ese supuesto.
 - El dataset no incluye variables autonómicas (por ejemplo, termorregulación). Una extensión natural es aplicar este enfoque a cohortes como PPMI, con escalas como SCOPA-AUT.
 
 ## Cómo reproducirlo
@@ -84,6 +86,10 @@ jupyter notebook                    # ejecutar los notebooks en orden: 01 → 02
     ├── resumen03.py     # resumen ejecutivo del notebook 03
     └── viz.py           # gráficos y guardado
 ```
+
+## Licencia
+
+El código se distribuye bajo licencia [MIT](LICENSE). Los datos son de UCI, con licencia CC BY 4.0.
 
 ## Autora
 

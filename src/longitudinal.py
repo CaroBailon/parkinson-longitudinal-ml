@@ -8,12 +8,17 @@ Idea central: separar cada predictor en dos partes (descomposición "entre / den
 
 El modelo mixto agrega un intercepto y una pendiente temporal ALEATORIOS por paciente:
 cada paciente tiene su propio nivel inicial y su propio ritmo de progresión.
+
+El tiempo entra en MESES (no en semanas): con semanas, la varianza de la pendiente es tan chica
+comparada con la del intercepto que el optimizador no converge, y el resultado no convergido
+subestima la varianza entre pacientes (lo que achica los intervalos de confianza).
 """
 import warnings
 
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
+from scipy import stats
 
 from src.analysis import ID
 
@@ -28,6 +33,9 @@ VOZ_SELECCION = {
 }
 
 
+DIAS_POR_MES = 30.4375
+
+
 def preparar_datos_mixto(semanal: pd.DataFrame, objetivo: str = "total_UPDRS") -> pd.DataFrame:
     """Arma la tabla para el modelo mixto a partir de los datos semanales.
 
@@ -39,6 +47,7 @@ def preparar_datos_mixto(semanal: pd.DataFrame, objetivo: str = "total_UPDRS") -
     d = semanal[[ID, "semana", "age", "sex", objetivo] + list(VOZ_SELECCION)].rename(columns=VOZ_SELECCION)
     d = d.rename(columns={objetivo: "y"})
     d["semanas"] = d["semana"] - d.groupby(ID)["semana"].transform("min")  # 0 = primera semana del paciente
+    d["meses"] = d["semanas"] * 7 / DIAS_POR_MES                             # el tiempo que usa el modelo
     d["edad_z"] = (d["age"] - d["age"].mean()) / d["age"].std()
     for v in VOZ_SELECCION.values():
         z = (d[v] - d[v].mean()) / d[v].std()
@@ -48,18 +57,23 @@ def preparar_datos_mixto(semanal: pd.DataFrame, objetivo: str = "total_UPDRS") -
 
 
 def formula_mixto() -> str:
-    terminos = ["semanas", "edad_z", "sex"]
+    terminos = ["meses", "edad_z", "sex"]
     for v in VOZ_SELECCION.values():
         terminos += [f"{v}_entre", f"{v}_dentro"]
     return "y ~ " + " + ".join(terminos)
 
 
 def ajustar_mixto(d: pd.DataFrame):
-    """Modelo mixto con intercepto y pendiente temporal aleatorios por paciente."""
-    modelo = smf.mixedlm(formula_mixto(), d, groups=d[ID], re_formula="~semanas")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # avisos de convergencia habituales en mixedlm
-        return modelo.fit(method="lbfgs", reml=True)
+    """Modelo mixto con intercepto y pendiente temporal aleatorios por paciente.
+
+    No se silencian los avisos: si el optimizador no converge, los errores estándar no son confiables
+    y conviene enterarse. Por eso además se verifica `converged` explícitamente.
+    """
+    modelo = smf.mixedlm(formula_mixto(), d, groups=d[ID], re_formula="~meses")
+    resultado = modelo.fit(method="lbfgs", reml=True)
+    if not resultado.converged:
+        warnings.warn("El modelo mixto NO convergió: los p-valores e intervalos no son confiables.")
+    return resultado
 
 
 def tabla_coeficientes(resultado) -> pd.DataFrame:
@@ -98,3 +112,60 @@ def componentes_varianza(resultado) -> dict:
         "var_residuo": var_residuo,
         "icc_inicio": var_intercepto / (var_intercepto + var_residuo),
     }
+
+
+# ---------------------------------------------------------------------------
+# Diagnóstico del modelo: ¿se cumplen los supuestos?
+# ---------------------------------------------------------------------------
+def tabla_diagnostico(d: pd.DataFrame, resultado) -> pd.DataFrame:
+    """Chequea los supuestos de los que dependen los p-valores del modelo mixto.
+
+    - Convergencia del optimizador.
+    - Normalidad de los efectos aleatorios (42 valores, uno por paciente: Shapiro-Wilk es adecuado).
+    - Residuos: forma (curtosis) y varianza constante. No se usa Shapiro con ~1.000 residuos:
+      con tantos datos rechaza la normalidad por desvíos mínimos; para eso está el QQ-plot.
+    - Independencia: autocorrelación de los residuos de una semana con la siguiente, dentro del paciente.
+    """
+    efectos = pd.DataFrame(resultado.random_effects).T
+    efectos.columns = ["intercepto", "pendiente"]
+    r = d.assign(residuo=resultado.resid, ajustado=resultado.fittedvalues).sort_values([ID, "semanas"])
+    autocorr = r["residuo"].corr(r.groupby(ID)["residuo"].shift())
+    filas = [
+        ("Convergencia del optimizador", "Sí" if resultado.converged else "No",
+         "Necesaria para confiar en errores estándar y p-valores"),
+        ("Efectos aleatorios · intercepto (Shapiro p)", f"{stats.shapiro(efectos['intercepto']).pvalue:.2f}",
+         "p > 0,05: compatible con normalidad"),
+        ("Efectos aleatorios · pendiente (Shapiro p)", f"{stats.shapiro(efectos['pendiente']).pvalue:.2f}",
+         "p > 0,05: compatible con normalidad"),
+        ("Residuos · asimetría", f"{stats.skew(r['residuo']):+.2f}", "Cerca de 0: simétricos"),
+        ("Residuos · exceso de curtosis", f"{stats.kurtosis(r['residuo']):.1f}",
+         "> 0: colas más pesadas que la normal"),
+        ("Residuos · |residuo| vs. ajustado (Spearman)",
+         f"{stats.spearmanr(r['residuo'].abs(), r['ajustado']).statistic:+.2f}", "Cerca de 0: varianza constante"),
+        ("Residuos · autocorrelación semana a semana", f"{autocorr:+.2f}",
+         "Cerca de 0: independientes dentro del paciente"),
+    ]
+    return pd.DataFrame(filas, columns=["chequeo", "valor", "cómo leerlo"]).set_index("chequeo")
+
+
+def chequeos_robustez(d: pd.DataFrame) -> pd.DataFrame:
+    """Repite las dos conclusiones principales con métodos que NO dependen de los supuestos del modelo mixto.
+
+    1. Progresión: se ajusta una recta por paciente y se testea si la pendiente promedio es distinta de 0
+       (t de Student sobre 42 pendientes). La autocorrelación dentro del paciente no afecta este test.
+    2. Efectos entre pacientes: regresión con una fila por paciente (promedios), sin estructura longitudinal.
+    """
+    pendientes = d.groupby(ID)[["meses", "y"]].apply(lambda g: np.polyfit(g["meses"], g["y"], 1)[0])
+    t = stats.ttest_1samp(pendientes, 0)
+    filas = [{"conclusión": "Progresión promedio (UPDRS por mes)", "método": "Recta por paciente + t de Student",
+              "estimado": pendientes.mean(), "p_valor": t.pvalue}]
+
+    entre = [f"{v}_entre" for v in VOZ_SELECCION.values()]
+    pacientes = d.groupby(ID)[["y", "edad_z", "sex"] + entre].mean()
+    ols = smf.ols("y ~ edad_z + sex + " + " + ".join(entre), pacientes).fit()
+    nombres = {f"{v}_entre": k for k, v in VOZ_SELECCION.items()}
+    for termino in entre:
+        filas.append({"conclusión": f"Efecto entre pacientes · {nombres[termino]}",
+                      "método": "Regresión con 1 fila por paciente",
+                      "estimado": ols.params[termino], "p_valor": ols.pvalues[termino]})
+    return pd.DataFrame(filas).set_index("conclusión")

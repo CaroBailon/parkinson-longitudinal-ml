@@ -5,6 +5,7 @@ VS Code, Jupyter en el navegador y en los HTML exportados a reports/, sin depend
 """
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -15,7 +16,7 @@ REPORTS_DIR = Path(__file__).resolve().parents[1] / "reports"
 pio.templates.default = "plotly_white"
 
 
-def guardar(fig, nombre: str) -> None:
+def guardar(fig, nombre: str, alto: int = 550) -> None:
     """Guarda la figura en reports/ como HTML interactivo y, si es posible, como PNG.
 
     - HTML: se abre en el navegador y mantiene la interactividad.
@@ -24,7 +25,7 @@ def guardar(fig, nombre: str) -> None:
     REPORTS_DIR.mkdir(exist_ok=True)
     fig.write_html(REPORTS_DIR / f"{nombre}.html", include_plotlyjs="cdn")
     try:
-        fig.write_image(REPORTS_DIR / f"{nombre}.png", width=1100, height=550, scale=2)
+        fig.write_image(REPORTS_DIR / f"{nombre}.png", width=1100, height=alto, scale=2)
     except Exception as e:  # kaleido no instalado o sin navegador disponible
         print(f"(PNG no generado para '{nombre}': {type(e).__name__}. El HTML sí se guardó.)")
 
@@ -127,4 +128,44 @@ def explorador_dispersion(df: pd.DataFrame, centrados: pd.DataFrame, variables: 
     fig.update_xaxes(title_text=f"{v0} (centrada por paciente)", row=1, col=2)
     fig.update_yaxes(title_text=objetivo, row=1, col=1)
     fig.update_yaxes(title_text=f"{objetivo} (centrada)", row=1, col=2)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Diagnóstico de un modelo mixto
+# ---------------------------------------------------------------------------
+def _qq(valores) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Cuantiles teóricos (normal) vs. observados, y la recta de referencia."""
+    from scipy import stats
+    (teoricos, observados), (pendiente, ordenada, _) = stats.probplot(np.asarray(valores), dist="norm")
+    return teoricos, observados, pendiente * teoricos + ordenada
+
+
+def panel_diagnostico(residuos: pd.Series, ajustados: pd.Series, interceptos: pd.Series,
+                      residuo_anterior: pd.Series) -> go.Figure:
+    """Cuatro gráficos para revisar los supuestos de un modelo mixto."""
+    fig = make_subplots(rows=2, cols=2, vertical_spacing=0.14, horizontal_spacing=0.1, subplot_titles=(
+        "QQ-plot de residuos", "Residuos vs. valores ajustados",
+        "QQ-plot de interceptos aleatorios (1 por paciente)", "Residuo vs. residuo de la semana anterior"))
+    gris = {"color": "gray", "dash": "dash"}
+
+    for (fila, col), valores in [((1, 1), residuos), ((2, 1), interceptos)]:
+        x, y, recta = _qq(valores)
+        fig.add_trace(go.Scatter(x=x, y=y, mode="markers", marker={"size": 4, "opacity": 0.5}), row=fila, col=col)
+        fig.add_trace(go.Scatter(x=x, y=recta, mode="lines", line=gris), row=fila, col=col)
+        fig.update_xaxes(title_text="Cuantil teórico (normal)", row=fila, col=col)
+        fig.update_yaxes(title_text="Cuantil observado", row=fila, col=col)
+
+    fig.add_trace(go.Scatter(x=ajustados, y=residuos, mode="markers", marker={"size": 4, "opacity": 0.4}),
+                  row=1, col=2)
+    fig.add_hline(y=0, line=gris, row=1, col=2)
+    fig.update_xaxes(title_text="Valor ajustado (UPDRS)", row=1, col=2)
+    fig.update_yaxes(title_text="Residuo", row=1, col=2)
+
+    fig.add_trace(go.Scatter(x=residuo_anterior, y=residuos, mode="markers", marker={"size": 4, "opacity": 0.4}),
+                  row=2, col=2)
+    fig.update_xaxes(title_text="Residuo semana anterior", row=2, col=2)
+    fig.update_yaxes(title_text="Residuo", row=2, col=2)
+
+    fig.update_layout(title="Diagnóstico del modelo mixto", showlegend=False, height=800)
     return fig

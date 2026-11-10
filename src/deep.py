@@ -33,17 +33,25 @@ def crear_ventanas(semanal: pd.DataFrame, objetivo: str = "total_UPDRS",
       y: UPDRS real `horizonte` semanas después de la última semana de la historia
       ultimo: UPDRS de la última semana de la historia (punto de partida de la predicción)
       grupos: paciente de cada ventana
-    Las semanas sin grabaciones se saltean (se usa el orden de las semanas disponibles).
+
+    Algunos pacientes tienen semanas sin grabaciones. Para que "4 semanas de historia" y
+    "4 semanas hacia adelante" signifiquen exactamente eso, solo se arman ventanas cuya historia
+    son semanas consecutivas y cuyo objetivo está a exactamente `horizonte` semanas de la última.
+    (Si se usara el orden de las filas, un hueco convertiría el horizonte de 4 en 5 a 9 semanas.)
     """
     columnas = [objetivo] + list(VOZ_SELECCION)
     X, y, ultimo, grupos = [], [], [], []
     for pid, g in semanal.sort_values([ID, "semana"]).groupby(ID):
         valores = g[columnas].to_numpy(dtype=float)
-        for inicio in range(len(g) - largo - horizonte + 1):
-            fin = inicio + largo
-            X.append(valores[inicio:fin])
-            ultimo.append(valores[fin - 1, 0])
-            y.append(valores[fin - 1 + horizonte, 0])
+        posicion = {s: i for i, s in enumerate(g["semana"])}   # semana -> fila
+        for s0 in g["semana"]:
+            historia = [posicion.get(s0 + k) for k in range(largo)]
+            futuro = posicion.get(s0 + largo - 1 + horizonte)
+            if None in historia or futuro is None:
+                continue
+            X.append(valores[historia])
+            ultimo.append(valores[historia[-1], 0])
+            y.append(valores[futuro, 0])
             grupos.append(pid)
     return {"X": np.array(X), "y": np.array(y), "ultimo": np.array(ultimo),
             "grupos": np.array(grupos), "columnas": columnas}
